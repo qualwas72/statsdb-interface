@@ -133,7 +133,7 @@ class ServerSelector(BaseSelector):
 
     def getdict(self):
         if self.pathid is not None:
-            return self.single(self.pathid)
+            return self.single(self.pathid) or {'error': 'Not Found'}
         f = self.makefilters()
         handles = [r[0] for r in
         self.db.con.execute(
@@ -219,7 +219,8 @@ class GameSelector(BaseSelector):
                     player = {}
                     dictfromrow(player, player_row, [None,
                         "name", "handle",
-                        "score", "timealive", "frags", "deaths", "id"])
+                        "score", "timealive", "frags", "deaths", "id",
+                        "timeactive"])
                     if self.minimal == 'basicplayer2':
                         player["damage"] = self.db.con.execute(
                             """SELECT (sum(damage1) + sum(damage2))
@@ -274,7 +275,8 @@ class GameSelector(BaseSelector):
                     }
                 dictfromrow(player, player_row, [None,
                     "name", "handle",
-                    "score", "timealive", "frags", "deaths", "id"])
+                    "score", "timealive", "frags", "deaths", "id",
+                    "timeactive"])
 
                 player["damage"] = self.db.con.execute(
                         """SELECT (sum(damage1) + sum(damage2))
@@ -320,7 +322,7 @@ class GameSelector(BaseSelector):
 
     def getdict(self, one=False, last=None):
         if self.pathid is not None:
-            return self.single(self.pathid)
+            return self.single(self.pathid) or {'error': 'Not Found'}
         f = self.makefilters(where=False)
         if self.server.dbexists:
             ids = [r[0] for r in
@@ -406,18 +408,21 @@ class PlayerSelector(BaseSelector):
             """SELECT sum(%s) FROM
             (SELECT * FROM game_players
             WHERE game IN (SELECT id FROM games
-            WHERE mode != re_mode(id, 'race'))
+            %s)
             AND %s
             AND handle = ?
             ORDER by ROWID DESC LIMIT %d)""" % (x,
+                "WHERE mode != re_mode(id, 'race')" if x not in
+                ['timeactive'] else "",
                 self.vlimit(),
                 self.server.cfgval("playerrecentavg")), (handle,)).fetchone()[0]
         allsum = lambda x: self.db.con.execute(
             """SELECT sum(%s) FROM game_players
             WHERE game IN (SELECT id FROM games
-            WHERE mode != re_mode(id, 'race'))
+            %s)
             AND handle = ?
-            AND %s""" % (x,
+            AND %s""" % (x, "WHERE mode != re_mode(id, 'race')" if x not in
+            ['timeactive'] else "",
                 self.vlimit()), (handle,)
             ).fetchone()[0]
         alltime = {
@@ -506,7 +511,7 @@ class PlayerSelector(BaseSelector):
 
     def getdict(self):
         if self.pathid is not None:
-            return self.single(self.pathid)
+            return self.single(self.pathid) or {'error': 'Not Found'}
         f = self.makefilters()
         ids = [r[0] for r in
         self.db.con.execute(
@@ -565,8 +570,8 @@ class WeaponSelector(BaseSelector):
     def getdict(self):
         if self.pathid is not None:
             if self.pathid not in redeclipse().weaponlist:
-                return None
-            return self.single(self.pathid)
+                return {'error': 'Not Found'}
+            return self.single(self.pathid) or {'error': 'Not Found'}
         ret = {}
         for w in redeclipse().weaponlist:
             ret[w] = self.single(w)
@@ -632,7 +637,7 @@ class MapSelector(BaseSelector):
 
     def getdict(self):
         if self.pathid is not None:
-            return self.single(self.pathid)
+            return self.single(self.pathid) or {'error': 'Not Found'}
         f = self.makefilters()
         maps = [r[0] for r in
         self.db.con.execute(
@@ -674,7 +679,7 @@ class ModeSelector(BaseSelector):
 
     def getdict(self):
         if self.pathid is not None:
-            return self.single(self.pathid)
+            return self.single(self.pathid) or {'error': 'Not Found'}
         f = self.makefilters()
         modes = [r[0] for r in
         self.db.con.execute(
@@ -685,6 +690,39 @@ class ModeSelector(BaseSelector):
             ret[mode] = self.single(mode, False)
         return ret
 
+
+class MutSelector(BaseSelector):
+
+    def single(self, mut, one=True):
+        if mut not in list(redeclipse().basemuts.keys())[:-1]:
+            return None
+        ret = {
+            "id": mut,
+            "recentgames": {},
+            }
+        ret["games"] = [r[0] for r in
+        self.db.con.execute(
+            """SELECT id FROM games
+            WHERE mutators & re_mut(id, '%s')""" % ret["id"])]
+        if one:
+            for gid in list(reversed(ret["games"]))[
+                :self.server.cfgval("moderecent")]:
+                gs = GameSelector(self)
+                game = gs.single(gid, one=False)
+                ret["recentgames"][gid] = game
+        return ret
+
+    def getdict(self):
+        if self.pathid is not None:
+            return self.single(self.pathid) or {'error': 'Not Found'}
+        muts = list(redeclipse().basemuts.keys())[:-1]
+        ret = {}
+        for mut in muts:
+            r = self.single(mut, False)
+            if r:
+                ret[mut] = r
+        return ret
+
 selectors = {
     'servers': ServerSelector(),
     'games': GameSelector(),
@@ -692,4 +730,5 @@ selectors = {
     'weapons': WeaponSelector(),
     'maps': MapSelector(),
     'modes': ModeSelector(),
+    'muts': MutSelector(),
     }
